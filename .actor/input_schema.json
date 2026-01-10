@@ -17,9 +17,12 @@
         "platforms": {
             "title": "Platforms",
             "type": "array",
-            "description": "Which platforms to scrape (reddit, youtube, instagram, facebook, blog).",
-            "editor": "stringArrayEditor",
-            "default": ["reddit", "blog"]
+            "description": "Which platforms to scrape.",
+            "default": ["reddit", "blog"],
+            "items": {
+                "type": "string",
+                "enum": ["reddit", "youtube", "instagram", "facebook", "blog"]
+            }
         },
         "query": {
             "title": "Query / Keywords",
