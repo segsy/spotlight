@@ -18,7 +18,7 @@
             "title": "Platforms",
             "type": "array",
             "description": "Which platforms to scrape.",
-            "editor": "json",
+            "editor": "select",
             "default": ["reddit", "blog"],
             "items": {
                 "type": "string",
