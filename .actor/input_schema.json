@@ -18,6 +18,7 @@
             "title": "Platforms",
             "type": "array",
             "description": "Which platforms to scrape.",
+            "editor": "json",
             "default": ["reddit", "blog"],
             "items": {
                 "type": "string",
@@ -45,13 +46,17 @@
         "sort": {
             "title": "Sort",
             "type": "string",
-            "description": "Sorting strategy for platforms that support it (hot, new, top, rising).",
+            "description": "Sorting strategy for platforms that support it.",
+            "editor": "select",
+            "enum": ["hot", "new", "top", "rising"],
             "default": "hot"
         },
         "timeFilter": {
             "title": "Time Filter",
             "type": "string",
-            "description": "Time filter for top posts (e.g., day, week, month, year, all).",
+            "description": "Time filter for top posts.",
+            "editor": "select",
+            "enum": ["day", "week", "month", "year", "all"],
             "default": "week"
         }
     },
