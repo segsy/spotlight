@@ -18,6 +18,7 @@
             "title": "Platforms",
             "type": "array",
             "description": "Which platforms to scrape (reddit, youtube, instagram, facebook, blog).",
+            "editor": "stringArrayEditor",
             "default": ["reddit", "blog"]
         },
         "query": {
