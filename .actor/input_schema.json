@@ -29,18 +29,21 @@
             "title": "Query / Keywords",
             "type": "string",
             "description": "Optional keywords, hashtags, or search queries to filter results.",
+            "editor": "textarea",
             "default": "sentiment analysis"
         },
         "maxRequestsPerCrawl": {
             "title": "Max Requests per Crawl",
             "type": "integer",
             "description": "Maximum number of requests that can be made by this crawler.",
+            "editor": "number",
             "default": 100
         },
         "maxCommentsDepth": {
             "title": "Max Comments Depth",
             "type": "integer",
             "description": "How deep to follow nested comments (if applicable).",
+            "editor": "number",
             "default": 3
         },
         "sort": {
