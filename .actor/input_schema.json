@@ -1,0 +1,55 @@
+{
+    "title": "Input schema of the Spotlight Multi Scrapping System",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "startUrls": {
+            "title": "Start URLs",
+            "type": "array",
+            "description": "URLs to start with (e.g., subreddit, user, channel, blog).",
+            "editor": "requestListSources",
+            "prefill": [
+                {
+                    "url": "https://www.reddit.com/r/programming/"
+                }
+            ]
+        },
+        "platforms": {
+            "title": "Platforms",
+            "type": "array",
+            "description": "Which platforms to scrape (reddit, youtube, instagram, facebook, blog).",
+            "default": ["reddit", "blog"]
+        },
+        "query": {
+            "title": "Query / Keywords",
+            "type": "string",
+            "description": "Optional keywords, hashtags, or search queries to filter results.",
+            "default": "sentiment analysis"
+        },
+        "maxRequestsPerCrawl": {
+            "title": "Max Requests per Crawl",
+            "type": "integer",
+            "description": "Maximum number of requests that can be made by this crawler.",
+            "default": 100
+        },
+        "maxCommentsDepth": {
+            "title": "Max Comments Depth",
+            "type": "integer",
+            "description": "How deep to follow nested comments (if applicable).",
+            "default": 3
+        },
+        "sort": {
+            "title": "Sort",
+            "type": "string",
+            "description": "Sorting strategy for platforms that support it (hot, new, top, rising).",
+            "default": "hot"
+        },
+        "timeFilter": {
+            "title": "Time Filter",
+            "type": "string",
+            "description": "Time filter for top posts (e.g., day, week, month, year, all).",
+            "default": "week"
+        }
+    },
+    "required": ["startUrls"]
+}
