@@ -18,7 +18,7 @@ function analyzeSentiment(text) {
 
 // Infer platform from a URL when not explicitly provided
 function platformFromUrl(url) {
-    if (!url) return 'web';
+    if (!url || typeof url !== 'string') return 'web';
     const u = url.toLowerCase();
     if (u.includes('reddit.com')) return 'reddit';
     if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
