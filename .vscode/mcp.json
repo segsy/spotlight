@@ -1,0 +1,9 @@
+{
+	"servers": {
+		"Apify": {
+			"type": "http",
+			"url": "https://mcp.apify.com/?tools=docs"
+		}
+	},
+	"inputs": []
+}
