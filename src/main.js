@@ -44,8 +44,19 @@ if (!Array.isArray(startUrls) || startUrls.length === 0) {
     throw new Error('`startUrls` must be a non-empty array.');
 }
 // Only create proxy config when running on Apify platform
-
-const proxyConfiguration = await Actor.createProxyConfiguration();
+let proxyConfiguration = null;
+try {
+    const isAtHome = typeof Actor.isAtHome === 'function' ? Actor.isAtHome() : !!process.env.APIFY_IS_AT_HOME;
+    if (isAtHome) {
+        proxyConfiguration = await Actor.createProxyConfiguration();
+    } else {
+        console.log('Running locally - skipping proxy configuration');
+        proxyConfiguration = null;
+    }
+} catch (err) {
+    console.warn('Failed to create proxy configuration, continuing without proxy', { error: err?.message });
+    proxyConfiguration = null;
+}
 
 
 
