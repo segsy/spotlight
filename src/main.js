@@ -1,6 +1,6 @@
 // Apify SDK - toolkit for building Apify Actors
 import { Actor } from 'apify';
-import { CheerioCrawler, PlaywrightCrawler,PuppeteerCrawler, Dataset } from 'crawlee';
+import { CheerioCrawler, PlaywrightCrawler, Dataset } from 'crawlee';
 
 
 // Simple sentiment analyzer (tiny lexicon) to avoid extra deps.
