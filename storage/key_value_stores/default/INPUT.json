@@ -1,0 +1,18 @@
+{
+  "platforms": [
+    "reddit",
+    "blog"
+  ],
+  "query": "sentiment analysis",
+  "maxRequestsPerCrawl": 100,
+  "maxCommentsDepth": 3,
+  "sort": "hot",
+  "timeFilter": "week",
+  "profile": "https://www.instagram.com/silverpeny/",
+  "maxPosts": 10,
+  "startUrls": [
+    {
+      "url": "https://www.instagram.com/silverpeny/"
+    }
+  ]
+}

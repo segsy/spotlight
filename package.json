@@ -8,7 +8,9 @@
     },
     "dependencies": {
         "apify": "^3.4.2",
+        "apify-client": "^1.0.0",
         "crawlee": "^3.13.8",
+        "dotenv": "^16.0.0",
         "playwright": "^1.40.0"
     },
     "devDependencies": {
@@ -19,6 +21,7 @@
     },
     "scripts": {
         "start": "node src/main.js",
+        "run-actor": "node src/run-actor.js",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "lint": "eslint",

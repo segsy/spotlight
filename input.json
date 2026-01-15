@@ -1,0 +1,7 @@
+{
+	"profile": "https://www.instagram.com/silverpeny/",
+	"maxPosts": 10,
+	"startUrls": [
+		{ "url": "https://www.instagram.com/silverpeny/" }
+	]
+}

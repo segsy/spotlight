@@ -1,6 +1,7 @@
 // Apify SDK - toolkit for building Apify Actors
 import { Actor } from 'apify';
-import { CheerioCrawler, PlaywrightCrawler, Dataset } from 'crawlee';
+import { CheerioCrawler, PlaywrightCrawler,PuppeteerCrawler, Dataset } from 'crawlee';
+
 
 // Simple sentiment analyzer (tiny lexicon) to avoid extra deps.
 function analyzeSentiment(text) {
@@ -42,8 +43,11 @@ const {
 if (!Array.isArray(startUrls) || startUrls.length === 0) {
     throw new Error('`startUrls` must be a non-empty array.');
 }
+// Only create proxy config when running on Apify platform
 
 const proxyConfiguration = await Actor.createProxyConfiguration();
+
+
 
 // Helper to save items prepared for NLP processors.
 async function saveItem({ url, title, text, platform, extra = {} }) {
@@ -59,6 +63,7 @@ async function saveItem({ url, title, text, platform, extra = {} }) {
     };
     await Dataset.pushData(item);
 }
+
 
 // Run CheerioCrawler for static sites (blogs, Reddit listing pages)
 const cheerioUrls = startUrls.filter((u) => {
