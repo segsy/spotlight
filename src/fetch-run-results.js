@@ -2,95 +2,94 @@ import 'dotenv/config';
 import fs from 'fs/promises';
 import path from 'path';
 
-async function main() {
-    const token = process.env.APIFY_TOKEN;
-    let runId = process.env.RUN_ID;
-    const runsEndpointEnv = process.env.APIFY_RUNS_ENDPOINT; // optional full endpoint to list runs
-    if (!token) {
-        console.error('Missing APIFY_TOKEN in environment.');
-        process.exit(1);
-    }
+const ACTOR_ID = process.env.ACTOR_ID || 'segsy~spotlight-multi-scrapping-system';
 
-    // If RUN_ID isn't provided, try to obtain the latest run from a provided runs endpoint.
-    if (!runId) {
-        const endpoint = runsEndpointEnv || `https://api.apify.com/v2/acts/segsy~spotlight-multi-scrapping-system/runs?token=${encodeURIComponent(token)}`;
-        console.log('No RUN_ID provided — fetching runs list from', endpoint);
-        try {
-            const runsRes = await fetch(endpoint, { headers: { Accept: 'application/json' } });
-            if (!runsRes.ok) {
-                console.error('Failed to fetch runs list:', runsRes.status, await runsRes.text());
-                process.exit(2);
-            }
-            const runsJson = await runsRes.json();
-            // runsJson may have items or runs or data
-            const candidates = runsJson.items || runsJson.runs || runsJson.data || runsJson;
-            const first = Array.isArray(candidates) ? candidates[0] : null;
-            runId = first?.id || first?.runId || first?.actorRunId || null;
-            if (!runId) {
-                console.error('Could not determine run id from runs list. Dumping response keys:', Object.keys(runsJson || {}));
-                console.error(JSON.stringify(runsJson, null, 2).slice(0, 1000));
-                process.exit(3);
-            }
-            console.log('Selected run id:', runId);
-        } catch (e) {
-            console.error('Failed to fetch runs endpoint:', e?.message || e);
-            process.exit(4);
-        }
-    }
-
-    const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-
-    // Try multiple possible run endpoints until one succeeds
-    const runEndpoints = [
-        `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}`,
-        `https://api.apify.com/v2/runs/${encodeURIComponent(runId)}`,
-        `https://api.apify.com/v2/actors/runs/${encodeURIComponent(runId)}`,
-    ];
-    let runJson = null;
-    for (const url of runEndpoints) {
-        try {
-            const res = await fetch(url, { headers });
-            if (res.ok) {
-                runJson = await res.json();
-                console.log('Fetched run via', url);
-                break;
-            } else {
-                const text = await res.text();
-                console.log('Endpoint', url, 'returned', res.status, text.slice(0, 200));
-            }
-        } catch (e) {
-            console.log('Request to', url, 'failed:', e?.message || e);
-        }
-    }
-    if (!runJson) {
-        console.error('Could not fetch run from any known endpoint');
-        process.exit(2);
-    }
-    // try to find dataset id in common locations
-    const datasetId = runJson.defaultDatasetId || runJson.data?.defaultDatasetId || runJson.data?.datasetId || runJson.defaultDatasetId;
-    if (!datasetId) {
-        console.error('Could not find dataset id in run response. Dumping run keys:', Object.keys(runJson));
-        console.error(JSON.stringify(runJson, null, 2));
-        process.exit(3);
-    }
-
-    console.log('Found dataset id:', datasetId);
-
-    // Fetch dataset items (JSON)
-    const itemsUrl = `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items?format=json&clean=true&limit=10000`;
-    const itemsRes = await fetch(itemsUrl, { headers });
-    if (!itemsRes.ok) {
-        console.error('Failed to fetch dataset items:', itemsRes.status, await itemsRes.text());
-        process.exit(4);
-    }
-    const items = await itemsRes.json();
-
-    const outDir = path.join('storage', 'datasets');
-    await fs.mkdir(outDir, { recursive: true });
-    const outPath = path.join(outDir, `${datasetId}.json`);
-    await fs.writeFile(outPath, JSON.stringify(items, null, 2), 'utf8');
-
-    console.log(`Saved ${items.length} items to ${outPath}`);
+async function fetchJson(url, headers) {
+  const res = await fetch(url, { headers });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* ignore */ }
+  return { ok: res.ok, status: res.status, text, json };
 }
 
-main().catch(err => { console.error(err); process.exit(10); });
+async function main() {
+  const token = process.env.APIFY_TOKEN;
+  let runId = process.env.RUN_ID;
+
+  if (!token) {
+    console.error('Missing APIFY_TOKEN in environment.');
+    process.exit(1);
+  }
+
+  // NOTE: Node < 18 will crash here.
+  if (typeof fetch !== 'function') {
+    console.error('Global fetch is not available. Use Node 18+ or add a fetch polyfill (undici/node-fetch).');
+    process.exit(1);
+  }
+
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
+
+  // If RUN_ID isn't provided, fetch the latest run for the actor
+  if (!runId) {
+    const listRunsUrl =
+      `https://api.apify.com/v2/acts/${encodeURIComponent(ACTOR_ID)}/runs?limit=1&desc=1`;
+
+    console.log('No RUN_ID provided — fetching latest run from:', listRunsUrl);
+    const { ok, status, json, text } = await fetchJson(listRunsUrl, headers);
+    if (!ok) {
+      console.error('Failed to fetch runs list:', status, text.slice(0, 500));
+      process.exit(2);
+    }
+
+    const first = json?.data?.items?.[0];
+    runId = first?.id;
+    if (!runId) {
+      console.error('Could not determine run id. Response keys:', Object.keys(json || {}));
+      console.error(JSON.stringify(json, null, 2).slice(0, 1200));
+      process.exit(3);
+    }
+    console.log('Selected run id:', runId);
+  }
+
+  // Fetch run details (most standard endpoint)
+  const runUrl = `https://api.apify.com/v2/actor-runs/${encodeURIComponent(runId)}`;
+  const runRes = await fetchJson(runUrl, headers);
+
+  if (!runRes.ok) {
+    console.error('Failed to fetch run:', runRes.status, runRes.text.slice(0, 500));
+    process.exit(4);
+  }
+
+  const datasetId = runRes.json?.data?.defaultDatasetId;
+  if (!datasetId) {
+    console.error('Could not find defaultDatasetId in run response.');
+    console.error(JSON.stringify(runRes.json, null, 2).slice(0, 1200));
+    process.exit(5);
+  }
+
+  console.log('Found dataset id:', datasetId);
+
+  // Fetch dataset items
+  const itemsUrl =
+    `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items?format=json&clean=true&limit=10000`;
+
+  const itemsRes = await fetchJson(itemsUrl, headers);
+  if (!itemsRes.ok) {
+    console.error('Failed to fetch dataset items:', itemsRes.status, itemsRes.text.slice(0, 500));
+    process.exit(6);
+  }
+
+  const items = itemsRes.json || [];
+  const outDir = path.join('storage', 'datasets');
+  await fs.mkdir(outDir, { recursive: true });
+
+  const outPath = path.join(outDir, `${datasetId}.json`);
+  await fs.writeFile(outPath, JSON.stringify(items, null, 2), 'utf8');
+
+  console.log(`Saved ${items.length} items to ${outPath}`);
+}
+
+main().catch((err) => {
+  console.error(err?.stack || err);
+  process.exit(10);
+});
