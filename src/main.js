@@ -1,3 +1,4 @@
+// src/main.js
 import { Actor } from 'apify';
 import { CheerioCrawler, PlaywrightCrawler } from 'crawlee';
 
@@ -35,10 +36,15 @@ function normalizeStartUrls(startUrls) {
 
 Actor.main(async () => {
   const input = (await Actor.getInput()) ?? {};
-  const { startUrls = [{ url: 'https://www.reddit.com/r/programming/' }], maxRequestsPerCrawl = 100 } = input;
+  const {
+    startUrls = [{ url: 'https://www.reddit.com/r/programming/' }],
+    maxRequestsPerCrawl = 100,
+  } = input;
 
   const urls = normalizeStartUrls(startUrls);
-  if (urls.length === 0) throw new Error('`startUrls` must include at least one valid URL (string or { url }).');
+  if (urls.length === 0) {
+    throw new Error('`startUrls` must include at least one valid URL (string or { url }).');
+  }
 
   // Proxy (safe)
   let proxyConfiguration = null;
@@ -66,19 +72,23 @@ Actor.main(async () => {
     });
   }
 
-  const safeEnqueue = async (enqueueLinks, log) => {
+  // Use safe globs + safe logger
+  const safeEnqueue = async (enqueueLinks) => {
     try {
       await enqueueLinks({
         selector: 'a',
         globs: ['http://**/*', 'https://**/*'],
       });
     } catch (e) {
-      log.warning('enqueueLinks failed', { error: e?.message });
+      Actor.log.warning('enqueueLinks failed', { error: e?.message });
     }
   };
 
-  // Cheerio
+  // -------------------------
+  // CheerioCrawler (static)
+  // -------------------------
   const cheerioUrls = urls.filter((u) => ['reddit', 'blog'].includes(platformFromUrl(u)));
+
   if (cheerioUrls.length) {
     const crawler = new CheerioCrawler({
       proxyConfiguration,
@@ -112,23 +122,35 @@ Actor.main(async () => {
           extra: { commentsCount: comments.length },
         });
 
-        await safeEnqueue(enqueueLinks, log);
+        await safeEnqueue(enqueueLinks);
       },
 
-      failedRequestHandler({ request, error, log }) {
-        log.error('Cheerio request failed', { url: request.url, error: error?.message });
+      // ✅ NEW Crawlee v3 signature: (context, error)
+      failedRequestHandler({ request }, error) {
+        Actor.log.error('Cheerio request failed', {
+          url: request.url,
+          error: error?.message || String(error),
+        });
       },
     });
 
     await crawler.run(cheerioUrls);
   }
 
-  // Playwright
+  // -------------------------
+  // PlaywrightCrawler (dynamic)
+  // -------------------------
   const playwrightUrls = urls.filter((u) => ['youtube', 'instagram'].includes(platformFromUrl(u)));
+
   if (playwrightUrls.length) {
     const pwCrawler = new PlaywrightCrawler({
       proxyConfiguration,
       maxRequestsPerCrawl,
+
+      // Helps reduce rate-limits a bit (especially IG)
+      maxConcurrency: 1,
+      sameDomainDelaySecs: 5,
+
       launchContext: { launchOptions: { headless: true } },
 
       async requestHandler({ page, request, enqueueLinks, log }) {
@@ -155,7 +177,6 @@ Actor.main(async () => {
         } else if (platform === 'instagram') {
           await page.waitForSelector('article', { timeout: 8000 }).catch(() => null);
 
-          // Safer than $$eval (won't throw if none)
           const nodes = await page.$$('ul li > div > div > div > span');
           const comments = [];
           for (const n of nodes.slice(0, 50)) {
@@ -179,11 +200,15 @@ Actor.main(async () => {
           });
         }
 
-        await safeEnqueue(enqueueLinks, log);
+        await safeEnqueue(enqueueLinks);
       },
 
-      failedRequestHandler({ request, error, log }) {
-        log.error('Playwright request failed', { url: request.url, error: error?.message });
+      // ✅ NEW Crawlee v3 signature: (context, error)
+      failedRequestHandler({ request }, error) {
+        Actor.log.error('Playwright request failed', {
+          url: request.url,
+          error: error?.message || String(error),
+        });
       },
     });
 
