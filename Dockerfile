@@ -5,13 +5,9 @@ FROM apify/actor-node-playwright:20
 COPY --chown=myuser:myuser package*.json ./
 
 RUN npm --quiet set progress=false \
-  && npm install --omit=dev --omit=optional \
-  && npx --yes playwright install --with-deps chromium \
-  && echo "Installed NPM packages:" \
-  && (npm list --omit=dev --all || true) \
-  && echo "Node.js version:" && node --version \
-  && echo "NPM version:" && npm --version \
-  && rm -r ~/.npm
+  && npm install --omit=dev \
+  && npx --yes playwright install chromium \
+  && rm -rf ~/.npm
 
 COPY --chown=myuser:myuser . ./
 
