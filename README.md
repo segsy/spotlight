@@ -1,125 +1,186 @@
-📊 Spotlight Multi Scrapping System
+📊 Spotlight Multi Scraping System
 
-Spotlight Multi Scrapping System is an Apify Actor that lets you scrape public social media posts, nested comments, user metadata, and website discussions without needing API keys, login tokens, or cookie handling. It’s perfect for sentiment analysis, trend detection, social listening, competitive research, and lead generation across platforms like Reddit, Facebook, Instagram, YouTube, blogs, forums, and more.
+Spotlight Multi Scraping System is a powerful Apify Actor designed to extract public posts, comments, replies, and discussions from social media platforms and websites — without API keys, login tokens, or cookie management.
 
-🚀 Why Use This Actor?
+It enables teams to collect structured, NLP-ready data for sentiment analysis, trend discovery, social listening, competitive research, and lead generation across multiple platforms from a single workflow.
 
-Spotlight Multi Scrapping System solves a common pain point:
+🚀 Why Use Spotlight Multi Scraping System?
 
-Extract structured public social media and web comment data without APIs.
+Modern platforms restrict APIs, enforce rate limits, and require complex authentication. Spotlight removes those barriers.
 
-Avoid platform rate limits, credential restrictions, and complex login flows.
+What this Actor solves
 
-Ideal for analysts, data scientists, devs, and growth teams building insights or NLP workflows.
+Scrape public social and web data without APIs or credentials
 
-Business benefits:
+Avoid rate-limit headaches and fragile authentication flows
 
-📈 Fast data access for dashboards and analytics.
+Collect clean, structured datasets ready for analysis or AI pipelines
 
-🤖 NLP-ready output for classification and sentiment models.
+Who it’s for
 
-🛠️ Scalable scraping with robust crawling support.
+📊 Data analysts & researchers
 
-📦 Integrates with tools like Python, R, Excel, Power BI, or Google Sheets.
+🤖 AI / NLP engineers
+
+🧠 Growth & marketing teams
+
+🧑‍💻 Developers building dashboards or automation
+
+Business benefits
+
+📈 Faster access to real-world conversation data
+
+🛠️ Scalable crawling for small or large datasets
+
+🤖 NLP-friendly output for sentiment & topic modeling
+
+📦 Easy integration with Python, R, Excel, Power BI, and Google Sheets
 
 🧠 Key Features
-
-Spotlight Multi Scrapping System empowers you with:
-
 ✨ Multi-Platform Data Extraction
-• Scrape posts, nested comments, replies, and user info from platforms like Reddit, Facebook, Instagram, YouTube, blogs, etc.
+
+Scrape posts, comments, replies, and discussions from:
+
+Reddit
+
+Instagram
+
+YouTube
+
+Facebook (public content)
+
+Blogs & websites
+
+Forums and comment sections
 
 🔄 Recursive Comment Crawling
-• Crawl full comment threads and reply hierarchies, not just top-level comments.
 
-📊 User Metadata
-• Get author handles, profile attributes, timestamps, engagement metrics, and more.
+Extract full comment threads
+
+Capture nested replies and discussion depth
+
+Not limited to top-level comments
+
+👤 User & Post Metadata
+
+Collect useful context such as:
+
+Author / username
+
+Timestamps
+
+Engagement metrics
+
+Source URLs
+
+Platform identifiers
 
 ⏱️ Flexible Filters
-• Sort by hot / new / top / rising
-• Time range filtering for historical and fresh data.
+
+Control your crawl with:
+
+Sort options: hot / new / top / rising
+
+Time-range filters for historical or recent data
+
+Crawl depth limits
 
 📈 Proxy & Pagination Support
-• Designed for large crawls with reliable proxy handling and pagination.
 
-📦 NLP-Friendly Output
-• Output schemas optimized for sentiment analysis, topic modeling, summarization, and classification.
+Designed for large-scale crawling
+
+Works with Apify Proxy for reliability
+
+Handles pagination automatically
+
+📦 NLP-Ready Output
+
+Output schema is optimized for:
+
+Sentiment analysis
+
+Topic modeling
+
+Text classification
+
+Summarization
+
+Trend detection
 
 🚀 How It Works
 
-Input your target query or URL(s) — e.g., subreddit, YouTube video, blog thread.
+Provide target URLs or queries
+(e.g., subreddit, Instagram profile, YouTube video, blog page)
 
-Configure filters (sort order, time range, depth).
+Configure crawl options
+(platforms, depth, sorting, limits)
 
-Run the Actor to extract structured JSON results.
+Run the Actor
+Spotlight extracts structured data in real time
 
-Download results in JSON, CSV, or Excel for analytics or ML workflows.
-
-🧪 Input Example
-{
-  "platform": "reddit",
-  "query": "technology trends",
-  "sortBy": "top",
-  "timeRange": {
-    "startDate": "2025-01-01",
-    "endDate": "2025-12-31"
-  },
-  "maxComments": 500
-}
-
-📤 Output Example
-
+Download results
+Use the dataset in JSON, CSV, or Excel for analytics or ML workflows
+🧪 Real Data Extraction Input 
 [
   {
-    "postId": "abc123",
-    "platform": "reddit",
-    "text": "AI is transforming data pipelines!",
-    "author": "data_guru",
-    "timestamp": "2025-01-15T08:42:00Z",
-    "comments": [
-      {
-        "commentId": "cmt456",
-        "author": "insights_pro",
-        "text": "Totally — we use it weekly.",
-        "replies": [],
-        "timestamp": "2025-01-15T09:10:00Z"
-      }
-    ]
+    "title": "Ayilola Ayotomiwa (@silverpeny) • Instagram photos and videos",
+    "url": "https://www.instagram.com/silverpeny/"
+  },
+  {
+    "title": "Public Form Discussion",
+    "url": "https://l.instagram.com/?u=https%3A%2F%2Fforms.gle%2F7sMf1WY5dGz6qNCj7"
   }
 ]
 
 📌 Output Formats
 
-You can download your dataset in various formats:
+Download your results in multiple formats:
 
-📁 JSON – best for programmatic use or ML workflows
+📁 JSON — best for automation and ML pipelines
 
-📊 CSV – great for spreadsheets and BI
+📊 CSV — ideal for spreadsheets and BI tools
 
-📈 Excel – easy visualization and reporting
+📈 Excel — quick reporting and visualization
 
-⚙️ Tips & Advanced Options
+⚙️ Tips & Advanced Usage
 
-Use time range filters to limit scraping costs and focus on the most relevant data.
+🔍 Use time filters to reduce crawl cost and noise
 
-Combine with Apify Scheduler to run recurring crawls.
+🔁 Combine with Apify Scheduler for recurring monitoring
 
-Integrate with Apify API for automated workflows or dashboards.
+🔗 Connect via Apify API for dashboards or automated pipelines
+
+🧠 Feed output directly into sentiment or NLP models
 
 💡 Related Actors & Tools
 
-Check out other useful Actors for analytics and scraping in the Apify Store.
-Links: [Add your other Actors here]
+Explore other scraping and analytics Actors in the Apify Store.
+👉 Add links to your other Actors here
 
 ❓ FAQ & Support
+Is it legal to scrape this data?
 
-Is it legal to scrape this content?
-This Actor only extracts publicly available data. You should still respect platform terms and regional laws (e.g., GDPR) when processing personal information.
+This Actor only collects publicly available content.
+You are responsible for complying with platform terms and applicable laws (e.g., GDPR, local data-protection regulations).
 
-Troubleshooting tips
+Troubleshooting
 
-If a site changes its layout, update scraping selectors.
+🔧 If a website layout changes, update scraping selectors
 
-If you hit rate limits, enable proxy rotation or reduce crawl speed.
+🚦 If you encounter rate limits, enable proxy rotation or reduce crawl speed
 
-Need help? Visit the Issues tab or contact support.
+🐞 Check run logs for detailed error messages
+
+Need help?
+
+Use the Issues tab on the Actor page
+
+Contact support through Apify
+
+Review run logs for debugging details
+
+🌟 Summary
+
+Spotlight Multi Scraping System gives you a single, scalable solution to monitor, analyze, and understand online conversations — without APIs, logins, or friction.
+
+👉 Ideal for data-driven teams, AI workflows, and market intelligence.
