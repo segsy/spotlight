@@ -264,10 +264,12 @@ Actor.main(async () => {
       url,
       title: title || null,
 
-      posts: Array.isArray(posts) ? posts : [],
-      postsCount: Array.isArray(posts) ? posts.length : 0,
-      comments: Array.isArray(comments) ? comments : [],
-      commentsCount: Array.isArray(comments) ? comments.length : 0,
+      posts: safePosts,
+      postsCount: safePosts.length,
+
+      comments: safeComments,
+      commentsCount: safeComments.length,
+
       keywordStats,
       blocked: !!blocked,
       blockReason: blockReason || null,
