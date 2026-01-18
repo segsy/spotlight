@@ -3,6 +3,30 @@ import { Actor } from 'apify';
 import { CheerioCrawler, PlaywrightCrawler } from 'crawlee';
 
 // ----------------------------
+// Safe logger (never throws)
+// ----------------------------
+const L = {
+  info: (msg, data) => {
+    try {
+      if (Actor?.log?.info) return Actor.log.info(msg, data);
+    } catch {}
+    console.log(msg, data ?? '');
+  },
+  warning: (msg, data) => {
+    try {
+      if (Actor?.log?.warning) return Actor.log.warning(msg, data);
+    } catch {}
+    console.warn(msg, data ?? '');
+  },
+  error: (msg, data) => {
+    try {
+      if (Actor?.log?.error) return Actor.log.error(msg, data);
+    } catch {}
+    console.error(msg, data ?? '');
+  },
+};
+
+// ----------------------------
 // Tiny sentiment helper (lexicon)
 // ----------------------------
 function analyzeSentiment(text) {
@@ -48,7 +72,6 @@ function computeKeywordStats(comments, keywords) {
       avgComparative: m ? stats[k].comparativeSum / m : 0,
     };
   }
-
   return stats;
 }
 
@@ -157,18 +180,13 @@ Actor.main(async () => {
     platforms = ['youtube', 'instagram', 'reddit', 'blog'],
     maxRequestsPerCrawl = 30,
 
-    // Keyword sentiment stats
     keywords = [],
-
-    // Extraction tuning
     maxCommentsPerPage = 80,
     maxRelatedVideos = 6,
 
-    // Slow down to reduce blocks
     maxConcurrency = 1,
     sameDomainDelaySecs = 6,
 
-    // Proxy tuning
     proxyGroups = ['RESIDENTIAL'],
     proxyCountryCode = null,
   } = input;
@@ -209,17 +227,17 @@ Actor.main(async () => {
 
       proxyConfiguration = await Actor.createProxyConfiguration(cfg);
 
-      Actor.log.info('Apify Proxy enabled', {
+      L.info('Apify Proxy enabled', {
         usesApifyProxy: proxyConfiguration?.usesApifyProxy,
         groups: proxyConfiguration?.groups,
         countryCode: proxyCountryCode || null,
       });
     } catch (e) {
-      Actor.log.warning('Failed to initialize Apify Proxy. Continuing without proxy.', { error: e?.message });
+      L.warning('Failed to initialize Apify Proxy. Continuing without proxy.', { error: e?.message || String(e) });
       proxyConfiguration = null;
     }
   } else {
-    Actor.log.info('Running locally — Apify Proxy disabled');
+    L.info('Running locally — Apify Proxy disabled');
   }
 
   async function saveItem(item) {
@@ -229,19 +247,16 @@ Actor.main(async () => {
     });
   }
 
-  // ✅ Safe enqueue helper — never throws, never relies on context.log
+  // ✅ Safe enqueue helper — never throws, never depends on context.log
   const safeEnqueue = async (enqueueLinks) => {
     if (typeof enqueueLinks !== 'function') return;
-
     try {
       await enqueueLinks({
         selector: 'a',
         globs: ['http://**/*', 'https://**/*'],
       });
     } catch (e) {
-      Actor.log.warning('enqueueLinks failed', {
-        error: e?.message || String(e),
-      });
+      L.warning('enqueueLinks failed', { error: e?.message || String(e) });
     }
   };
 
@@ -268,15 +283,12 @@ Actor.main(async () => {
           sentimentPlaceholder: analyzeSentiment(body || title || ''),
         });
 
-        // ⚠️ Optional: comment this out if you don't want blog/reddit crawling to expand
+        // optional: disable if you don't want expanding crawls
         await safeEnqueue(enqueueLinks);
       },
 
       failedRequestHandler({ request }, error) {
-        Actor.log.error('Cheerio request failed', {
-          url: request.url,
-          error: error?.message || String(error),
-        });
+        L.error('Cheerio request failed', { url: request.url, error: error?.message || String(error) });
       },
     });
 
@@ -367,7 +379,7 @@ Actor.main(async () => {
                 url: x.href.startsWith('http') ? x.href : `https://www.youtube.com${x.href}`,
               }));
             } catch (e) {
-              Actor.log.warning('Failed to fetch channel videos', { channelUrl, error: e?.message });
+              L.warning('Failed to fetch channel videos', { channelUrl, error: e?.message || String(e) });
             }
           }
 
@@ -419,10 +431,7 @@ Actor.main(async () => {
       },
 
       failedRequestHandler({ request }, error) {
-        Actor.log.error('Playwright request failed', {
-          url: request.url,
-          error: error?.message || String(error),
-        });
+        L.error('Playwright request failed', { url: request.url, error: error?.message || String(error) });
 
         Actor.pushData({
           platform: platformFromUrl(request.url),
@@ -436,5 +445,5 @@ Actor.main(async () => {
     await pw.run(playwrightUrls);
   }
 
-  Actor.log.info('Done.');
+  L.info('Done.');
 });
