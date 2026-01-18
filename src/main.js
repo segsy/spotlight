@@ -165,7 +165,7 @@ Actor.main(async () => {
     platforms = ['youtube', 'instagram', 'reddit', 'blog'],
     maxRequestsPerCrawl = 50,
 
-    // ✅ Requested: posts + comments + counts
+    // ✅ Requested: output posts+count and comments+count
     maxPostsPerSource = 15,
     maxCommentsPerPost = 50,
 
@@ -187,6 +187,9 @@ Actor.main(async () => {
     .map((u) => u.trim())
     .filter((u) => !isGarbageUrl(u))
     .map((u) => (platformFromUrl(u) === 'youtube' ? toCanonicalYouTube(u) : u));
+
+  // ✅ Deduplicate startUrls so you don't get 3 identical output rows
+  urls = [...new Set(urls)];
 
   if (!urls.length) {
     throw new Error('No valid startUrls. Remove Google login/support URLs and provide actual page URLs.');
@@ -233,6 +236,7 @@ Actor.main(async () => {
     }
   };
 
+  // ✅ Always guarantee posts/comments arrays + counts in output
   async function saveResult({
     platform,
     url,
@@ -244,10 +248,13 @@ Actor.main(async () => {
     blockReason = null,
     extra = {},
   }) {
+    const safePosts = Array.isArray(posts) ? posts : [];
+    const safeComments = Array.isArray(comments) ? comments : [];
+
     const allTextForSentiment = [
       title || '',
-      ...posts.map((p) => p.title || p.text || ''),
-      ...comments.map((c) => c.text || c || ''),
+      ...safePosts.map((p) => p?.title || p?.text || ''),
+      ...safeComments.map((c) => c?.text || c || ''),
     ]
       .join('\n')
       .slice(0, 20000);
@@ -257,15 +264,13 @@ Actor.main(async () => {
       url,
       title: title || null,
 
-      // ✅ Requested output
-      posts,
-      postsCount: posts.length,
-      comments,
-      commentsCount: comments.length,
-
+      posts: Array.isArray(posts) ? posts : [],
+      postsCount: Array.isArray(posts) ? posts.length : 0,
+      comments: Array.isArray(comments) ? comments : [],
+      commentsCount: Array.isArray(comments) ? comments.length : 0,
       keywordStats,
-      blocked,
-      blockReason,
+      blocked: !!blocked,
+      blockReason: blockReason || null,
 
       sentimentPlaceholder: analyzeSentiment(allTextForSentiment),
       scrapedAt: new Date().toISOString(),
@@ -291,7 +296,7 @@ Actor.main(async () => {
 
         const pageTitle = $('title').text().trim() || $('h1').first().text().trim() || null;
 
-        // ✅ POSTS extraction
+        // ✅ POSTS extraction (best-effort)
         const posts = [];
         if (platform === 'reddit') {
           $('a[data-click-id="body"]').each((_, el) => {
@@ -331,7 +336,6 @@ Actor.main(async () => {
           keywordStats,
         });
 
-        // optional expansion for blogs/reddit
         await safeEnqueue(enqueueLinks);
       },
 
@@ -382,11 +386,12 @@ Actor.main(async () => {
         const title = await page.title().catch(() => null);
 
         if (block.blocked) {
+          // Still output required fields even when blocked
           await saveResult({
             platform,
             url,
             title,
-            posts: [],
+            posts: [{ title: title || `${platform} page`, url }],
             comments: [],
             blocked: true,
             blockReason: block.reason,
@@ -398,7 +403,7 @@ Actor.main(async () => {
         if (platform === 'youtube') {
           const posts = [{ title: title || 'YouTube Video', url }];
 
-          // Additional posts from same channel (best-effort)
+          // additional posts from same channel (best-effort)
           let channelUrl = null;
           try {
             const a = (await page.$('ytd-channel-name a')) || (await page.$('ytd-video-owner-renderer a'));
@@ -432,7 +437,7 @@ Actor.main(async () => {
             }
           }
 
-          // Return to original video & load comments
+          // return to original video to load comments
           await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
           await page.waitForTimeout(1000);
 
@@ -465,10 +470,11 @@ Actor.main(async () => {
 
         // ✅ Instagram: posts + comments + counts (best-effort)
         if (platform === 'instagram') {
-          const posts = [{ title: title || 'Instagram Post/Reel', url }];
+          const posts = [{ title: title || 'Instagram Post/Profile', url }];
 
           await page.waitForTimeout(1500);
 
+          // best-effort visible "comments"/text
           const nodes = await page.$$('article span');
           const texts = [];
           for (const n of nodes.slice(0, maxCommentsPerPost)) {
