@@ -74,6 +74,28 @@ function isHttpUrl(u) {
   }
 }
 
+function isGarbageUrl(u) {
+  try {
+    const x = new URL(u);
+    const h = x.hostname.replace(/^www\./, '');
+    if (h === 'accounts.google.com') return true;
+    if (h === 'support.google.com') return true;
+    if ((h === 'youtube.com' || h === 'm.youtube.com') && (x.pathname === '/' || x.pathname === '')) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function platformFromUrl(url) {
+  if (!url || typeof url !== 'string') return 'web';
+  const low = url.toLowerCase();
+  if (low.includes('reddit.com')) return 'reddit';
+  if (low.includes('youtube.com') || low.includes('youtu.be')) return 'youtube';
+  if (low.includes('instagram.com')) return 'instagram';
+  return 'blog';
+}
+
 function isYouTubeUrl(u) {
   try {
     const x = new URL(u);
@@ -106,28 +128,6 @@ function isInstagramUrl(u) {
   } catch {
     return false;
   }
-}
-
-function isGarbageUrl(u) {
-  try {
-    const x = new URL(u);
-    const h = x.hostname.replace(/^www\./, '');
-    if (h === 'accounts.google.com') return true;
-    if (h === 'support.google.com') return true;
-    if ((h === 'youtube.com' || h === 'm.youtube.com') && (x.pathname === '/' || x.pathname === '')) return true;
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-function platformFromUrl(url) {
-  if (!url || typeof url !== 'string') return 'web';
-  const low = url.toLowerCase();
-  if (low.includes('reddit.com')) return 'reddit';
-  if (low.includes('youtube.com') || low.includes('youtu.be')) return 'youtube';
-  if (low.includes('instagram.com')) return 'instagram';
-  return 'blog';
 }
 
 function toCanonicalYouTube(url) {
@@ -169,17 +169,16 @@ Actor.main(async () => {
     sameDomainDelaySecs = 6,
 
     // Proxy tuning
-    proxyGroups = ['RESIDENTIAL'], // best for YouTube/Instagram; change if needed
-    proxyCountryCode = null, // e.g. "US", "GB", "NG" (optional)
+    proxyGroups = ['RESIDENTIAL'],
+    proxyCountryCode = null,
   } = input;
 
-  // Normalize + sanitize start URLs
+  // Normalize + sanitize URLs
   let urls = normalizeStartUrls(startUrls)
     .filter(isHttpUrl)
     .map((u) => u.trim())
     .filter((u) => !isGarbageUrl(u));
 
-  // Filter by platforms
   const wanted = new Set((platforms || []).map((p) => String(p).toLowerCase()));
   urls = urls.filter((u) => {
     const p = platformFromUrl(u);
@@ -191,7 +190,6 @@ Actor.main(async () => {
     return false;
   });
 
-  // Canonicalize YouTube links
   urls = urls.map((u) => (isYouTubeUrl(u) ? toCanonicalYouTube(u) : u));
 
   if (urls.length === 0) {
@@ -200,19 +198,14 @@ Actor.main(async () => {
     );
   }
 
-  // ----------------------------
-  // ✅ Enable Apify Proxy (strict, safe)
-  // ----------------------------
+  // ✅ Enable Apify Proxy (safe)
   let proxyConfiguration = null;
-
   if (Actor.isAtHome?.()) {
     try {
       const cfg = {
         groups: Array.isArray(proxyGroups) && proxyGroups.length ? proxyGroups : ['RESIDENTIAL'],
       };
-      if (proxyCountryCode && typeof proxyCountryCode === 'string') {
-        cfg.countryCode = proxyCountryCode;
-      }
+      if (proxyCountryCode && typeof proxyCountryCode === 'string') cfg.countryCode = proxyCountryCode;
 
       proxyConfiguration = await Actor.createProxyConfiguration(cfg);
 
@@ -236,17 +229,32 @@ Actor.main(async () => {
     });
   }
 
+  // ✅ Safe enqueue helper — never throws, never relies on context.log
+  const safeEnqueue = async (enqueueLinks) => {
+    if (typeof enqueueLinks !== 'function') return;
+
+    try {
+      await enqueueLinks({
+        selector: 'a',
+        globs: ['http://**/*', 'https://**/*'],
+      });
+    } catch (e) {
+      Actor.log.warning('enqueueLinks failed', {
+        error: e?.message || String(e),
+      });
+    }
+  };
+
   // ----------------------------
-  // CheerioCrawler (reddit/blog only)
+  // Cheerio for reddit/blog
   // ----------------------------
   const cheerioUrls = urls.filter((u) => ['reddit', 'blog'].includes(platformFromUrl(u)));
-
   if (cheerioUrls.length) {
     const cheerio = new CheerioCrawler({
       proxyConfiguration,
       maxRequestsPerCrawl,
 
-      async requestHandler({ request, $, log }) {
+      async requestHandler({ request, $, log, enqueueLinks }) {
         log.info('Cheerio: processing', { url: request.url });
 
         const title = $('title').text() || $('h1').first().text() || null;
@@ -259,9 +267,11 @@ Actor.main(async () => {
           text: body,
           sentimentPlaceholder: analyzeSentiment(body || title || ''),
         });
+
+        // ⚠️ Optional: comment this out if you don't want blog/reddit crawling to expand
+        await safeEnqueue(enqueueLinks);
       },
 
-      // Crawlee v3 signature: (context, error)
       failedRequestHandler({ request }, error) {
         Actor.log.error('Cheerio request failed', {
           url: request.url,
@@ -274,10 +284,9 @@ Actor.main(async () => {
   }
 
   // ----------------------------
-  // PlaywrightCrawler (YouTube/Instagram only)
+  // Playwright for YouTube/Instagram
   // ----------------------------
   const playwrightUrls = urls.filter((u) => ['youtube', 'instagram'].includes(platformFromUrl(u)));
-
   if (playwrightUrls.length) {
     const pw = new PlaywrightCrawler({
       proxyConfiguration,
@@ -296,7 +305,6 @@ Actor.main(async () => {
 
       preNavigationHooks: [
         async ({ page }) => {
-          // Block heavy resources to reduce bandwidth & speed up
           await page.route('**/*', (route) => {
             const type = route.request().resourceType();
             if (['image', 'media', 'font'].includes(type)) return route.abort();
@@ -310,13 +318,9 @@ Actor.main(async () => {
         const platform = platformFromUrl(url);
         log.info('Playwright: processing', { url, platform });
 
-        // --------------------------
-        // YouTube video sentiment + channel "random" videos
-        // --------------------------
         if (platform === 'youtube') {
           await page.waitForTimeout(1000);
 
-          // Scroll a bit to load comments (best-effort)
           for (let i = 0; i < 4; i++) {
             await page.mouse.wheel(0, 1200);
             await page.waitForTimeout(1200);
@@ -324,7 +328,6 @@ Actor.main(async () => {
 
           const title = await page.title().catch(() => null);
 
-          // Collect comments
           const commentNodes = await page.$$('ytd-comment-renderer #content-text');
           const comments = [];
           for (const n of commentNodes.slice(0, maxCommentsPerPage)) {
@@ -334,7 +337,6 @@ Actor.main(async () => {
 
           const keywordStats = computeKeywordStats(comments, keywords);
 
-          // Discover channel URL (best-effort)
           let channelUrl = null;
           try {
             const a = (await page.$('ytd-channel-name a')) || (await page.$('ytd-video-owner-renderer a'));
@@ -344,7 +346,6 @@ Actor.main(async () => {
             channelUrl = null;
           }
 
-          // Collect a few other videos from same channel (random-ish: first N found)
           let relatedVideos = [];
           if (channelUrl) {
             const videosTab = channelUrl.includes('/videos') ? channelUrl : channelUrl.replace(/\/$/, '') + '/videos';
@@ -384,9 +385,6 @@ Actor.main(async () => {
           return;
         }
 
-        // --------------------------
-        // Instagram reels/posts (best-effort; often rate-limited)
-        // --------------------------
         if (platform === 'instagram') {
           await page.waitForTimeout(1500);
           const title = await page.title().catch(() => null);
@@ -412,7 +410,6 @@ Actor.main(async () => {
           return;
         }
 
-        // fallback
         await saveItem({
           platform,
           url,
@@ -421,14 +418,12 @@ Actor.main(async () => {
         });
       },
 
-      // Crawlee v3 signature: (context, error)
       failedRequestHandler({ request }, error) {
         Actor.log.error('Playwright request failed', {
           url: request.url,
           error: error?.message || String(error),
         });
 
-        // Save failure record for debugging
         Actor.pushData({
           platform: platformFromUrl(request.url),
           url: request.url,
