@@ -2,6 +2,9 @@
 import { Actor } from 'apify';
 import { CheerioCrawler, PlaywrightCrawler } from 'crawlee';
 
+// ----------------------------
+// Tiny sentiment helper (lexicon)
+// ----------------------------
 function analyzeSentiment(text) {
   if (!text) return { score: 0, comparative: 0 };
   const pos = ['good', 'great', 'excellent', 'love', 'like', 'awesome', 'happy', 'positive', 'best'];
@@ -15,15 +18,43 @@ function analyzeSentiment(text) {
   return { score, comparative: score / Math.max(1, words.length) };
 }
 
-function platformFromUrl(url) {
-  if (!url || typeof url !== 'string') return 'web';
-  const u = url.toLowerCase();
-  if (u.includes('reddit.com')) return 'reddit';
-  if (u.includes('youtube.com') || u.includes('youtu.be')) return 'youtube';
-  if (u.includes('instagram.com')) return 'instagram';
-  return 'blog';
+function computeKeywordStats(comments, keywords) {
+  const keys = (keywords || [])
+    .map((k) => String(k || '').trim())
+    .filter(Boolean)
+    .slice(0, 25);
+
+  const stats = {};
+  for (const k of keys) stats[k] = { mentions: 0, sentimentSum: 0, comparativeSum: 0 };
+
+  for (const c of comments) {
+    const text = String(c || '');
+    const low = text.toLowerCase();
+    for (const k of keys) {
+      if (low.includes(k.toLowerCase())) {
+        const s = analyzeSentiment(text);
+        stats[k].mentions += 1;
+        stats[k].sentimentSum += s.score;
+        stats[k].comparativeSum += s.comparative;
+      }
+    }
+  }
+
+  for (const k of keys) {
+    const m = stats[k].mentions || 0;
+    stats[k] = {
+      mentions: m,
+      avgScore: m ? stats[k].sentimentSum / m : 0,
+      avgComparative: m ? stats[k].comparativeSum / m : 0,
+    };
+  }
+
+  return stats;
 }
 
+// ----------------------------
+// URL helpers
+// ----------------------------
 function normalizeStartUrls(startUrls) {
   if (!Array.isArray(startUrls)) return [];
   const urls = [];
@@ -34,98 +65,203 @@ function normalizeStartUrls(startUrls) {
   return urls.filter(Boolean);
 }
 
+function isHttpUrl(u) {
+  try {
+    const x = new URL(u);
+    return x.protocol === 'http:' || x.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isYouTubeUrl(u) {
+  try {
+    const x = new URL(u);
+    const h = x.hostname.replace(/^www\./, '');
+    if (h === 'youtu.be') return true;
+    if (h !== 'youtube.com' && h !== 'm.youtube.com') return false;
+    return (
+      x.pathname.startsWith('/watch') ||
+      x.pathname.startsWith('/shorts') ||
+      x.pathname.startsWith('/channel/') ||
+      x.pathname.startsWith('/@') ||
+      x.pathname.startsWith('/user/')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isInstagramUrl(u) {
+  try {
+    const x = new URL(u);
+    const h = x.hostname.replace(/^www\./, '');
+    if (h !== 'instagram.com' && h !== 'www.instagram.com') return false;
+    return (
+      /^\/[A-Za-z0-9._]+\/?$/.test(x.pathname) ||
+      x.pathname.startsWith('/reel/') ||
+      x.pathname.startsWith('/p/') ||
+      x.pathname.startsWith('/tv/')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isGarbageUrl(u) {
+  try {
+    const x = new URL(u);
+    const h = x.hostname.replace(/^www\./, '');
+    if (h === 'accounts.google.com') return true;
+    if (h === 'support.google.com') return true;
+    if ((h === 'youtube.com' || h === 'm.youtube.com') && (x.pathname === '/' || x.pathname === '')) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function platformFromUrl(url) {
+  if (!url || typeof url !== 'string') return 'web';
+  const low = url.toLowerCase();
+  if (low.includes('reddit.com')) return 'reddit';
+  if (low.includes('youtube.com') || low.includes('youtu.be')) return 'youtube';
+  if (low.includes('instagram.com')) return 'instagram';
+  return 'blog';
+}
+
+function toCanonicalYouTube(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') {
+      const id = u.pathname.replace('/', '');
+      const out = new URL('https://www.youtube.com/watch');
+      out.searchParams.set('v', id);
+      return out.toString();
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
+// ----------------------------
+// Main
+// ----------------------------
 Actor.main(async () => {
   const input = (await Actor.getInput()) ?? {};
+
   const {
-    startUrls = [{ url: 'https://www.reddit.com/r/programming/' }],
-    maxRequestsPerCrawl = 100,
+    startUrls = [{ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }],
+    platforms = ['youtube', 'instagram', 'reddit', 'blog'],
+    maxRequestsPerCrawl = 30,
+
+    // Keyword sentiment stats
+    keywords = [],
+
+    // Extraction tuning
+    maxCommentsPerPage = 80,
+    maxRelatedVideos = 6,
+
+    // Slow down to reduce blocks
+    maxConcurrency = 1,
+    sameDomainDelaySecs = 6,
+
+    // Proxy tuning
+    proxyGroups = ['RESIDENTIAL'], // best for YouTube/Instagram; change if needed
+    proxyCountryCode = null, // e.g. "US", "GB", "NG" (optional)
   } = input;
 
-  const urls = normalizeStartUrls(startUrls);
+  // Normalize + sanitize start URLs
+  let urls = normalizeStartUrls(startUrls)
+    .filter(isHttpUrl)
+    .map((u) => u.trim())
+    .filter((u) => !isGarbageUrl(u));
+
+  // Filter by platforms
+  const wanted = new Set((platforms || []).map((p) => String(p).toLowerCase()));
+  urls = urls.filter((u) => {
+    const p = platformFromUrl(u);
+    if (!wanted.size) return true;
+    if (p === 'youtube') return wanted.has('youtube') && isYouTubeUrl(u);
+    if (p === 'instagram') return wanted.has('instagram') && isInstagramUrl(u);
+    if (p === 'reddit') return wanted.has('reddit');
+    if (p === 'blog') return wanted.has('blog');
+    return false;
+  });
+
+  // Canonicalize YouTube links
+  urls = urls.map((u) => (isYouTubeUrl(u) ? toCanonicalYouTube(u) : u));
+
   if (urls.length === 0) {
-    throw new Error('`startUrls` must include at least one valid URL (string or { url }).');
+    throw new Error(
+      'No valid startUrls after filtering. Provide YouTube watch/shorts/channel URLs and/or Instagram reel/post/profile URLs. Avoid accounts.google.com links.'
+    );
   }
 
-  // Proxy (safe)
+  // ----------------------------
+  // ✅ Enable Apify Proxy (strict, safe)
+  // ----------------------------
   let proxyConfiguration = null;
+
   if (Actor.isAtHome?.()) {
     try {
-      proxyConfiguration = await Actor.createProxyConfiguration();
+      const cfg = {
+        groups: Array.isArray(proxyGroups) && proxyGroups.length ? proxyGroups : ['RESIDENTIAL'],
+      };
+      if (proxyCountryCode && typeof proxyCountryCode === 'string') {
+        cfg.countryCode = proxyCountryCode;
+      }
+
+      proxyConfiguration = await Actor.createProxyConfiguration(cfg);
+
+      Actor.log.info('Apify Proxy enabled', {
+        usesApifyProxy: proxyConfiguration?.usesApifyProxy,
+        groups: proxyConfiguration?.groups,
+        countryCode: proxyCountryCode || null,
+      });
     } catch (e) {
-      Actor.log.warning('Proxy configuration failed; continuing without proxy.', { error: e?.message });
+      Actor.log.warning('Failed to initialize Apify Proxy. Continuing without proxy.', { error: e?.message });
       proxyConfiguration = null;
     }
   } else {
-    Actor.log.info('Running locally - skipping proxy configuration');
+    Actor.log.info('Running locally — Apify Proxy disabled');
   }
 
-  async function saveItem({ url, title, text, platform, extra = {} }) {
-    const sentiment = analyzeSentiment(text || title || '');
+  async function saveItem(item) {
     await Actor.pushData({
-      platform,
-      url,
-      title: title || null,
-      text: (text || '').trim().slice(0, 20000),
-      sentimentPlaceholder: sentiment,
+      ...item,
       scrapedAt: new Date().toISOString(),
-      ...(extra || {}),
     });
   }
 
-  // Use safe globs + safe logger
-  const safeEnqueue = async (enqueueLinks) => {
-    try {
-      await enqueueLinks({
-        selector: 'a',
-        globs: ['http://**/*', 'https://**/*'],
-      });
-    } catch (e) {
-      Actor.log.warning('enqueueLinks failed', { error: e?.message });
-    }
-  };
-
-  // -------------------------
-  // CheerioCrawler (static)
-  // -------------------------
+  // ----------------------------
+  // CheerioCrawler (reddit/blog only)
+  // ----------------------------
   const cheerioUrls = urls.filter((u) => ['reddit', 'blog'].includes(platformFromUrl(u)));
 
   if (cheerioUrls.length) {
-    const crawler = new CheerioCrawler({
+    const cheerio = new CheerioCrawler({
       proxyConfiguration,
       maxRequestsPerCrawl,
 
-      async requestHandler({ enqueueLinks, request, $, log }) {
+      async requestHandler({ request, $, log }) {
         log.info('Cheerio: processing', { url: request.url });
 
-        const platform = platformFromUrl(request.url);
         const title = $('title').text() || $('h1').first().text() || null;
-
-        const body =
-          $('article').text() ||
-          $('[data-test-id="post-content"]').text() ||
-          $('body').text() ||
-          '';
-
-        let comments = [];
-        if (platform === 'reddit') {
-          $('div[data-testid="comment"]').each((_, el) => {
-            const t = $(el).text().trim();
-            if (t) comments.push(t.slice(0, 20000));
-          });
-        }
+        const body = ($('article').text() || $('body').text() || '').slice(0, 20000);
 
         await saveItem({
+          platform: platformFromUrl(request.url),
           url: request.url,
           title,
-          text: comments.join('\n\n') || body,
-          platform,
-          extra: { commentsCount: comments.length },
+          text: body,
+          sentimentPlaceholder: analyzeSentiment(body || title || ''),
         });
-
-        await safeEnqueue(enqueueLinks);
       },
 
-      // ✅ NEW Crawlee v3 signature: (context, error)
+      // Crawlee v3 signature: (context, error)
       failedRequestHandler({ request }, error) {
         Actor.log.error('Cheerio request failed', {
           url: request.url,
@@ -134,85 +270,175 @@ Actor.main(async () => {
       },
     });
 
-    await crawler.run(cheerioUrls);
+    await cheerio.run(cheerioUrls);
   }
 
-  // -------------------------
-  // PlaywrightCrawler (dynamic)
-  // -------------------------
+  // ----------------------------
+  // PlaywrightCrawler (YouTube/Instagram only)
+  // ----------------------------
   const playwrightUrls = urls.filter((u) => ['youtube', 'instagram'].includes(platformFromUrl(u)));
 
   if (playwrightUrls.length) {
-    const pwCrawler = new PlaywrightCrawler({
+    const pw = new PlaywrightCrawler({
       proxyConfiguration,
       maxRequestsPerCrawl,
 
-      // Helps reduce rate-limits a bit (especially IG)
-      maxConcurrency: 1,
-      sameDomainDelaySecs: 5,
+      maxConcurrency: Math.max(1, Number(maxConcurrency) || 1),
+      sameDomainDelaySecs: Math.max(0, Number(sameDomainDelaySecs) || 0),
+
+      navigationTimeoutSecs: 60,
+      requestHandlerTimeoutSecs: 120,
+
+      maxRequestRetries: 2,
+      blockedStatusCodes: [403, 429],
 
       launchContext: { launchOptions: { headless: true } },
 
-      async requestHandler({ page, request, enqueueLinks, log }) {
-        log.info('Playwright: processing', { url: request.url });
-        const platform = platformFromUrl(request.url);
+      preNavigationHooks: [
+        async ({ page }) => {
+          // Block heavy resources to reduce bandwidth & speed up
+          await page.route('**/*', (route) => {
+            const type = route.request().resourceType();
+            if (['image', 'media', 'font'].includes(type)) return route.abort();
+            return route.continue();
+          });
+        },
+      ],
 
+      async requestHandler({ page, request, log }) {
+        const url = request.url;
+        const platform = platformFromUrl(url);
+        log.info('Playwright: processing', { url, platform });
+
+        // --------------------------
+        // YouTube video sentiment + channel "random" videos
+        // --------------------------
         if (platform === 'youtube') {
-          await page.waitForSelector('ytd-comment-thread-renderer', { timeout: 8000 }).catch(() => null);
+          await page.waitForTimeout(1000);
 
-          const nodes = await page.$$('ytd-comment-renderer #content-text');
+          // Scroll a bit to load comments (best-effort)
+          for (let i = 0; i < 4; i++) {
+            await page.mouse.wheel(0, 1200);
+            await page.waitForTimeout(1200);
+          }
+
+          const title = await page.title().catch(() => null);
+
+          // Collect comments
+          const commentNodes = await page.$$('ytd-comment-renderer #content-text');
           const comments = [];
-          for (const n of nodes.slice(0, 50)) {
+          for (const n of commentNodes.slice(0, maxCommentsPerPage)) {
             const t = (await n.textContent())?.trim();
             if (t) comments.push(t);
           }
 
-          await saveItem({
-            url: request.url,
-            title: await page.title(),
-            text: comments.join('\n\n'),
-            platform,
-            extra: { commentsCount: comments.length },
-          });
-        } else if (platform === 'instagram') {
-          await page.waitForSelector('article', { timeout: 8000 }).catch(() => null);
+          const keywordStats = computeKeywordStats(comments, keywords);
 
-          const nodes = await page.$$('ul li > div > div > div > span');
-          const comments = [];
-          for (const n of nodes.slice(0, 50)) {
-            const t = (await n.textContent())?.trim();
-            if (t) comments.push(t);
+          // Discover channel URL (best-effort)
+          let channelUrl = null;
+          try {
+            const a = (await page.$('ytd-channel-name a')) || (await page.$('ytd-video-owner-renderer a'));
+            const href = a ? await a.getAttribute('href') : null;
+            if (href) channelUrl = href.startsWith('http') ? href : `https://www.youtube.com${href}`;
+          } catch {
+            channelUrl = null;
+          }
+
+          // Collect a few other videos from same channel (random-ish: first N found)
+          let relatedVideos = [];
+          if (channelUrl) {
+            const videosTab = channelUrl.includes('/videos') ? channelUrl : channelUrl.replace(/\/$/, '') + '/videos';
+            try {
+              await page.goto(videosTab, { waitUntil: 'domcontentloaded' });
+              await page.waitForTimeout(1200);
+
+              const links = await page.$$eval('a#video-title', (els) =>
+                els
+                  .map((e) => ({
+                    title: (e.getAttribute('title') || e.textContent || '').trim(),
+                    href: e.getAttribute('href') || '',
+                  }))
+                  .filter((x) => x.href && (x.href.startsWith('/watch') || x.href.startsWith('/shorts')))
+              );
+
+              relatedVideos = links.slice(0, maxRelatedVideos).map((x) => ({
+                title: x.title || 'Untitled video',
+                url: x.href.startsWith('http') ? x.href : `https://www.youtube.com${x.href}`,
+              }));
+            } catch (e) {
+              Actor.log.warning('Failed to fetch channel videos', { channelUrl, error: e?.message });
+            }
           }
 
           await saveItem({
-            url: request.url,
-            title: await page.title(),
-            text: comments.join('\n\n'),
-            platform,
-            extra: { commentsCount: comments.length },
+            platform: 'youtube',
+            url,
+            title,
+            commentsCount: comments.length,
+            keywordStats,
+            channelUrl,
+            relatedVideos,
+            sentimentPlaceholder: analyzeSentiment(comments.join('\n') || title || ''),
           });
-        } else {
-          await saveItem({
-            url: request.url,
-            title: await page.title(),
-            text: await page.content(),
-            platform,
-          });
+
+          return;
         }
 
-        await safeEnqueue(enqueueLinks);
+        // --------------------------
+        // Instagram reels/posts (best-effort; often rate-limited)
+        // --------------------------
+        if (platform === 'instagram') {
+          await page.waitForTimeout(1500);
+          const title = await page.title().catch(() => null);
+
+          const nodes = await page.$$('article span');
+          const texts = [];
+          for (const n of nodes.slice(0, maxCommentsPerPage)) {
+            const t = (await n.textContent())?.trim();
+            if (t) texts.push(t);
+          }
+
+          const keywordStats = computeKeywordStats(texts, keywords);
+
+          await saveItem({
+            platform: 'instagram',
+            url,
+            title,
+            commentsCount: texts.length,
+            keywordStats,
+            sentimentPlaceholder: analyzeSentiment(texts.join('\n') || title || ''),
+          });
+
+          return;
+        }
+
+        // fallback
+        await saveItem({
+          platform,
+          url,
+          title: await page.title().catch(() => null),
+          text: (await page.content().catch(() => '')).slice(0, 20000),
+        });
       },
 
-      // ✅ NEW Crawlee v3 signature: (context, error)
+      // Crawlee v3 signature: (context, error)
       failedRequestHandler({ request }, error) {
         Actor.log.error('Playwright request failed', {
           url: request.url,
           error: error?.message || String(error),
         });
+
+        // Save failure record for debugging
+        Actor.pushData({
+          platform: platformFromUrl(request.url),
+          url: request.url,
+          error: error?.message || String(error),
+          scrapedAt: new Date().toISOString(),
+        }).catch(() => null);
       },
     });
 
-    await pwCrawler.run(playwrightUrls);
+    await pw.run(playwrightUrls);
   }
 
   Actor.log.info('Done.');
