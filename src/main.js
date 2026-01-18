@@ -7,21 +7,15 @@ import { CheerioCrawler, PlaywrightCrawler } from 'crawlee';
 // ----------------------------
 const L = {
   info: (msg, data) => {
-    try {
-      if (Actor?.log?.info) return Actor.log.info(msg, data);
-    } catch {}
+    try { if (Actor?.log?.info) return Actor.log.info(msg, data); } catch {}
     console.log(msg, data ?? '');
   },
   warning: (msg, data) => {
-    try {
-      if (Actor?.log?.warning) return Actor.log.warning(msg, data);
-    } catch {}
+    try { if (Actor?.log?.warning) return Actor.log.warning(msg, data); } catch {}
     console.warn(msg, data ?? '');
   },
   error: (msg, data) => {
-    try {
-      if (Actor?.log?.error) return Actor.log.error(msg, data);
-    } catch {}
+    try { if (Actor?.log?.error) return Actor.log.error(msg, data); } catch {}
     console.error(msg, data ?? '');
   },
 };
@@ -42,7 +36,7 @@ function analyzeSentiment(text) {
   return { score, comparative: score / Math.max(1, words.length) };
 }
 
-function computeKeywordStats(comments, keywords) {
+function computeKeywordStats(texts, keywords) {
   const keys = (keywords || [])
     .map((k) => String(k || '').trim())
     .filter(Boolean)
@@ -51,8 +45,8 @@ function computeKeywordStats(comments, keywords) {
   const stats = {};
   for (const k of keys) stats[k] = { mentions: 0, sentimentSum: 0, comparativeSum: 0 };
 
-  for (const c of comments) {
-    const text = String(c || '');
+  for (const t of texts) {
+    const text = String(t || '');
     const low = text.toLowerCase();
     for (const k of keys) {
       if (low.includes(k.toLowerCase())) {
@@ -103,7 +97,6 @@ function isGarbageUrl(u) {
     const h = x.hostname.replace(/^www\./, '');
     if (h === 'accounts.google.com') return true;
     if (h === 'support.google.com') return true;
-    if ((h === 'youtube.com' || h === 'm.youtube.com') && (x.pathname === '/' || x.pathname === '')) return true;
     return false;
   } catch {
     return true;
@@ -117,40 +110,6 @@ function platformFromUrl(url) {
   if (low.includes('youtube.com') || low.includes('youtu.be')) return 'youtube';
   if (low.includes('instagram.com')) return 'instagram';
   return 'blog';
-}
-
-function isYouTubeUrl(u) {
-  try {
-    const x = new URL(u);
-    const h = x.hostname.replace(/^www\./, '');
-    if (h === 'youtu.be') return true;
-    if (h !== 'youtube.com' && h !== 'm.youtube.com') return false;
-    return (
-      x.pathname.startsWith('/watch') ||
-      x.pathname.startsWith('/shorts') ||
-      x.pathname.startsWith('/channel/') ||
-      x.pathname.startsWith('/@') ||
-      x.pathname.startsWith('/user/')
-    );
-  } catch {
-    return false;
-  }
-}
-
-function isInstagramUrl(u) {
-  try {
-    const x = new URL(u);
-    const h = x.hostname.replace(/^www\./, '');
-    if (h !== 'instagram.com' && h !== 'www.instagram.com') return false;
-    return (
-      /^\/[A-Za-z0-9._]+\/?$/.test(x.pathname) ||
-      x.pathname.startsWith('/reel/') ||
-      x.pathname.startsWith('/p/') ||
-      x.pathname.startsWith('/tv/')
-    );
-  } catch {
-    return false;
-  }
 }
 
 function toCanonicalYouTube(url) {
@@ -169,7 +128,6 @@ function toCanonicalYouTube(url) {
   }
 }
 
-// Detect blocks by status or page content
 async function detectBlocked({ page, response }) {
   const status = response?.status?.() ?? null;
   if (status === 403 || status === 429) return { blocked: true, reason: `HTTP ${status}` };
@@ -185,7 +143,6 @@ async function detectBlocked({ page, response }) {
       lower.includes('unusual traffic') ||
       lower.includes('verify you are a human') ||
       lower.includes('captcha') ||
-      lower.includes('consent') ||
       lower.includes('sign in to continue')
     ) {
       return { blocked: true, reason: 'Bot/verification page detected' };
@@ -204,46 +161,45 @@ Actor.main(async () => {
   const input = (await Actor.getInput()) ?? {};
 
   const {
-    startUrls = [{ url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }],
+    startUrls = [{ url: 'https://www.reddit.com/r/programming/' }],
     platforms = ['youtube', 'instagram', 'reddit', 'blog'],
-    maxRequestsPerCrawl = 30,
+    maxRequestsPerCrawl = 50,
 
+    // ✅ Requested: posts + comments + counts
+    maxPostsPerSource = 15,
+    maxCommentsPerPost = 50,
+
+    // Optional: keyword sentiment
     keywords = [],
-    maxCommentsPerPage = 80,
-    maxRelatedVideos = 6,
 
+    // Throttling
     maxConcurrency = 1,
     sameDomainDelaySecs = 6,
 
+    // Proxy
     proxyGroups = ['RESIDENTIAL'],
     proxyCountryCode = null,
   } = input;
 
+  // Normalize URLs
   let urls = normalizeStartUrls(startUrls)
     .filter(isHttpUrl)
     .map((u) => u.trim())
-    .filter((u) => !isGarbageUrl(u));
+    .filter((u) => !isGarbageUrl(u))
+    .map((u) => (platformFromUrl(u) === 'youtube' ? toCanonicalYouTube(u) : u));
 
+  if (!urls.length) {
+    throw new Error('No valid startUrls. Remove Google login/support URLs and provide actual page URLs.');
+  }
+
+  // Filter by requested platforms
   const wanted = new Set((platforms || []).map((p) => String(p).toLowerCase()));
   urls = urls.filter((u) => {
     const p = platformFromUrl(u);
-    if (!wanted.size) return true;
-    if (p === 'youtube') return wanted.has('youtube') && isYouTubeUrl(u);
-    if (p === 'instagram') return wanted.has('instagram') && isInstagramUrl(u);
-    if (p === 'reddit') return wanted.has('reddit');
-    if (p === 'blog') return wanted.has('blog');
-    return false;
+    return wanted.has(p) || (p === 'blog' && wanted.has('blog'));
   });
 
-  urls = urls.map((u) => (isYouTubeUrl(u) ? toCanonicalYouTube(u) : u));
-
-  if (urls.length === 0) {
-    throw new Error(
-      'No valid startUrls after filtering. Provide YouTube watch/shorts/channel URLs and/or Instagram reel/post/profile URLs. Avoid accounts.google.com links.'
-    );
-  }
-
-  // ✅ Enable Apify Proxy (safe)
+  // ✅ Enable Apify Proxy
   let proxyConfiguration = null;
   if (Actor.isAtHome?.()) {
     try {
@@ -267,49 +223,115 @@ Actor.main(async () => {
     L.info('Running locally — Apify Proxy disabled');
   }
 
-  async function saveItem(item) {
-    await Actor.pushData({
-      ...item,
-      scrapedAt: new Date().toISOString(),
-    });
-  }
-
-  // Safe enqueue helper
+  // ✅ Safe enqueue helper
   const safeEnqueue = async (enqueueLinks) => {
     if (typeof enqueueLinks !== 'function') return;
     try {
-      await enqueueLinks({
-        selector: 'a',
-        globs: ['http://**/*', 'https://**/*'],
-      });
+      await enqueueLinks({ selector: 'a', globs: ['http://**/*', 'https://**/*'] });
     } catch (e) {
       L.warning('enqueueLinks failed', { error: e?.message || String(e) });
     }
   };
 
+  async function saveResult({
+    platform,
+    url,
+    title,
+    posts = [],
+    comments = [],
+    keywordStats = null,
+    blocked = false,
+    blockReason = null,
+    extra = {},
+  }) {
+    const allTextForSentiment = [
+      title || '',
+      ...posts.map((p) => p.title || p.text || ''),
+      ...comments.map((c) => c.text || c || ''),
+    ]
+      .join('\n')
+      .slice(0, 20000);
+
+    await Actor.pushData({
+      platform,
+      url,
+      title: title || null,
+
+      // ✅ Requested output
+      posts,
+      postsCount: posts.length,
+      comments,
+      commentsCount: comments.length,
+
+      keywordStats,
+      blocked,
+      blockReason,
+
+      sentimentPlaceholder: analyzeSentiment(allTextForSentiment),
+      scrapedAt: new Date().toISOString(),
+      ...extra,
+    });
+  }
+
   // ----------------------------
-  // Cheerio for reddit/blog
+  // Cheerio: Reddit + Blogs
   // ----------------------------
   const cheerioUrls = urls.filter((u) => ['reddit', 'blog'].includes(platformFromUrl(u)));
+
   if (cheerioUrls.length) {
     const cheerio = new CheerioCrawler({
       proxyConfiguration,
       maxRequestsPerCrawl,
 
       async requestHandler({ request, $, log, enqueueLinks }) {
-        log.info('Cheerio: processing', { url: request.url });
+        const url = request.url;
+        const platform = platformFromUrl(url);
 
-        const title = $('title').text() || $('h1').first().text() || null;
-        const body = ($('article').text() || $('body').text() || '').slice(0, 20000);
+        log.info('Cheerio: processing', { url, platform });
 
-        await saveItem({
-          platform: platformFromUrl(request.url),
-          url: request.url,
-          title,
-          text: body,
-          sentimentPlaceholder: analyzeSentiment(body || title || ''),
+        const pageTitle = $('title').text().trim() || $('h1').first().text().trim() || null;
+
+        // ✅ POSTS extraction
+        const posts = [];
+        if (platform === 'reddit') {
+          $('a[data-click-id="body"]').each((_, el) => {
+            const t = $(el).text().trim();
+            const href = $(el).attr('href') || '';
+            if (!t) return;
+            const full = href.startsWith('http') ? href : `https://www.reddit.com${href}`;
+            posts.push({ title: t, url: full });
+          });
+        } else {
+          $('h1,h2').each((_, el) => {
+            const t = $(el).text().trim();
+            if (t) posts.push({ title: t });
+          });
+        }
+
+        // ✅ COMMENTS extraction (best-effort)
+        const comments = [];
+        $('[data-testid="comment"], .comment, #comments .comment').each((_, el) => {
+          const t = $(el).text().trim();
+          if (t) comments.push({ text: t.slice(0, 2000) });
         });
 
+        const limitedPosts = posts.slice(0, maxPostsPerSource);
+        const limitedComments = comments.slice(0, maxCommentsPerPost);
+
+        const keywordStats = keywords?.length
+          ? computeKeywordStats(limitedComments.map((c) => c.text), keywords)
+          : null;
+
+        await saveResult({
+          platform,
+          url,
+          title: pageTitle,
+          posts: limitedPosts,
+          comments: limitedComments,
+          keywordStats,
+        });
+
+        // optional expansion for blogs/reddit
         await safeEnqueue(enqueueLinks);
       },
 
@@ -322,9 +344,10 @@ Actor.main(async () => {
   }
 
   // ----------------------------
-  // Playwright for YouTube/Instagram
+  // Playwright: YouTube + Instagram
   // ----------------------------
   const playwrightUrls = urls.filter((u) => ['youtube', 'instagram'].includes(platformFromUrl(u)));
+
   if (playwrightUrls.length) {
     const pw = new PlaywrightCrawler({
       proxyConfiguration,
@@ -334,7 +357,7 @@ Actor.main(async () => {
       sameDomainDelaySecs: Math.max(0, Number(sameDomainDelaySecs) || 0),
 
       navigationTimeoutSecs: 60,
-      requestHandlerTimeoutSecs: 120,
+      requestHandlerTimeoutSecs: 180,
       maxRequestRetries: 2,
 
       launchContext: { launchOptions: { headless: true } },
@@ -349,62 +372,47 @@ Actor.main(async () => {
         },
       ],
 
-      async requestHandler({ page, request, log, enqueueLinks }) {
+      async requestHandler({ page, request, log }) {
         const url = request.url;
         const platform = platformFromUrl(url);
         log.info('Playwright: processing', { url, platform });
 
-        // Explicit navigation so we can read HTTP status
         const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
-
         const block = await detectBlocked({ page, response });
+        const title = await page.title().catch(() => null);
+
         if (block.blocked) {
-          await saveItem({
+          await saveResult({
             platform,
             url,
-            title: await page.title().catch(() => null),
+            title,
+            posts: [],
+            comments: [],
             blocked: true,
             blockReason: block.reason,
           });
-          // Throw to let Crawlee retry / mark failed
           throw new Error(`Blocked: ${block.reason}`);
         }
 
+        // ✅ YouTube: posts + comments + counts
         if (platform === 'youtube') {
-          await page.waitForTimeout(1000);
-          for (let i = 0; i < 4; i++) {
-            await page.mouse.wheel(0, 1200);
-            await page.waitForTimeout(1200);
-          }
+          const posts = [{ title: title || 'YouTube Video', url }];
 
-          const title = await page.title().catch(() => null);
-
-          const commentNodes = await page.$$('ytd-comment-renderer #content-text');
-          const comments = [];
-          for (const n of commentNodes.slice(0, maxCommentsPerPage)) {
-            const t = (await n.textContent())?.trim();
-            if (t) comments.push(t);
-          }
-
-          const keywordStats = computeKeywordStats(comments, keywords);
-
+          // Additional posts from same channel (best-effort)
           let channelUrl = null;
           try {
             const a = (await page.$('ytd-channel-name a')) || (await page.$('ytd-video-owner-renderer a'));
             const href = a ? await a.getAttribute('href') : null;
             if (href) channelUrl = href.startsWith('http') ? href : `https://www.youtube.com${href}`;
-          } catch {
-            channelUrl = null;
-          }
+          } catch {}
 
-          let relatedVideos = [];
           if (channelUrl) {
-            const videosTab = channelUrl.includes('/videos') ? channelUrl : channelUrl.replace(/\/$/, '') + '/videos';
+            const videosTab = channelUrl.replace(/\/$/, '') + '/videos';
             try {
               await page.goto(videosTab, { waitUntil: 'domcontentloaded' });
               await page.waitForTimeout(1200);
 
-              const links = await page.$$eval('a#video-title', (els) =>
+              const items = await page.$$eval('a#video-title', (els) =>
                 els
                   .map((e) => ({
                     title: (e.getAttribute('title') || e.textContent || '').trim(),
@@ -413,64 +421,76 @@ Actor.main(async () => {
                   .filter((x) => x.href && (x.href.startsWith('/watch') || x.href.startsWith('/shorts')))
               );
 
-              relatedVideos = links.slice(0, maxRelatedVideos).map((x) => ({
-                title: x.title || 'Untitled video',
-                url: x.href.startsWith('http') ? x.href : `https://www.youtube.com${x.href}`,
-              }));
+              for (const it of items.slice(0, maxPostsPerSource)) {
+                posts.push({
+                  title: it.title || 'YouTube Video',
+                  url: it.href.startsWith('http') ? it.href : `https://www.youtube.com${it.href}`,
+                });
+              }
             } catch (e) {
               L.warning('Failed to fetch channel videos', { channelUrl, error: e?.message || String(e) });
             }
           }
 
-          await saveItem({
+          // Return to original video & load comments
+          await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
+          await page.waitForTimeout(1000);
+
+          for (let i = 0; i < 5; i++) {
+            await page.mouse.wheel(0, 1400);
+            await page.waitForTimeout(1200);
+          }
+
+          const commentNodes = await page.$$('ytd-comment-renderer #content-text');
+          const comments = [];
+          for (const n of commentNodes.slice(0, maxCommentsPerPost)) {
+            const t = (await n.textContent())?.trim();
+            if (t) comments.push({ text: t });
+          }
+
+          const keywordStats = keywords?.length ? computeKeywordStats(comments.map((c) => c.text), keywords) : null;
+
+          await saveResult({
             platform: 'youtube',
             url,
             title,
-            commentsCount: comments.length,
+            posts: posts.slice(0, maxPostsPerSource),
+            comments,
             keywordStats,
-            channelUrl,
-            relatedVideos,
-            sentimentPlaceholder: analyzeSentiment(comments.join('\n') || title || ''),
+            extra: { channelUrl: channelUrl || null },
           });
 
-          // optional: don’t expand for YouTube; if you want, keep it:
-          // await safeEnqueue(enqueueLinks);
           return;
         }
 
+        // ✅ Instagram: posts + comments + counts (best-effort)
         if (platform === 'instagram') {
+          const posts = [{ title: title || 'Instagram Post/Reel', url }];
+
           await page.waitForTimeout(1500);
-          const title = await page.title().catch(() => null);
 
           const nodes = await page.$$('article span');
           const texts = [];
-          for (const n of nodes.slice(0, maxCommentsPerPage)) {
+          for (const n of nodes.slice(0, maxCommentsPerPost)) {
             const t = (await n.textContent())?.trim();
             if (t) texts.push(t);
           }
 
-          const keywordStats = computeKeywordStats(texts, keywords);
+          const comments = texts.map((t) => ({ text: t }));
 
-          await saveItem({
+          const keywordStats = keywords?.length ? computeKeywordStats(texts, keywords) : null;
+
+          await saveResult({
             platform: 'instagram',
             url,
             title,
-            commentsCount: texts.length,
+            posts,
+            comments,
             keywordStats,
-            sentimentPlaceholder: analyzeSentiment(texts.join('\n') || title || ''),
           });
 
           return;
         }
-
-        await saveItem({
-          platform,
-          url,
-          title: await page.title().catch(() => null),
-          text: (await page.content().catch(() => '')).slice(0, 20000),
-        });
-
-        await safeEnqueue(enqueueLinks);
       },
 
       failedRequestHandler({ request }, error) {
