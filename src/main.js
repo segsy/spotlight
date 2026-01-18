@@ -169,6 +169,34 @@ function toCanonicalYouTube(url) {
   }
 }
 
+// Detect blocks by status or page content
+async function detectBlocked({ page, response }) {
+  const status = response?.status?.() ?? null;
+  if (status === 403 || status === 429) return { blocked: true, reason: `HTTP ${status}` };
+
+  try {
+    const url = page.url();
+    if (url.includes('sorry') || url.includes('consent') || url.includes('captcha')) {
+      return { blocked: true, reason: `Redirected to ${url}` };
+    }
+    const html = await page.content();
+    const lower = html.toLowerCase();
+    if (
+      lower.includes('unusual traffic') ||
+      lower.includes('verify you are a human') ||
+      lower.includes('captcha') ||
+      lower.includes('consent') ||
+      lower.includes('sign in to continue')
+    ) {
+      return { blocked: true, reason: 'Bot/verification page detected' };
+    }
+  } catch {
+    // ignore
+  }
+
+  return { blocked: false, reason: null };
+}
+
 // ----------------------------
 // Main
 // ----------------------------
@@ -191,7 +219,6 @@ Actor.main(async () => {
     proxyCountryCode = null,
   } = input;
 
-  // Normalize + sanitize URLs
   let urls = normalizeStartUrls(startUrls)
     .filter(isHttpUrl)
     .map((u) => u.trim())
@@ -247,7 +274,7 @@ Actor.main(async () => {
     });
   }
 
-  // ✅ Safe enqueue helper — never throws, never depends on context.log
+  // Safe enqueue helper
   const safeEnqueue = async (enqueueLinks) => {
     if (typeof enqueueLinks !== 'function') return;
     try {
@@ -283,7 +310,6 @@ Actor.main(async () => {
           sentimentPlaceholder: analyzeSentiment(body || title || ''),
         });
 
-        // optional: disable if you don't want expanding crawls
         await safeEnqueue(enqueueLinks);
       },
 
@@ -309,9 +335,7 @@ Actor.main(async () => {
 
       navigationTimeoutSecs: 60,
       requestHandlerTimeoutSecs: 120,
-
       maxRequestRetries: 2,
-      blockedStatusCodes: [403, 429],
 
       launchContext: { launchOptions: { headless: true } },
 
@@ -325,14 +349,29 @@ Actor.main(async () => {
         },
       ],
 
-      async requestHandler({ page, request, log }) {
+      async requestHandler({ page, request, log, enqueueLinks }) {
         const url = request.url;
         const platform = platformFromUrl(url);
         log.info('Playwright: processing', { url, platform });
 
+        // Explicit navigation so we can read HTTP status
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(() => null);
+
+        const block = await detectBlocked({ page, response });
+        if (block.blocked) {
+          await saveItem({
+            platform,
+            url,
+            title: await page.title().catch(() => null),
+            blocked: true,
+            blockReason: block.reason,
+          });
+          // Throw to let Crawlee retry / mark failed
+          throw new Error(`Blocked: ${block.reason}`);
+        }
+
         if (platform === 'youtube') {
           await page.waitForTimeout(1000);
-
           for (let i = 0; i < 4; i++) {
             await page.mouse.wheel(0, 1200);
             await page.waitForTimeout(1200);
@@ -394,6 +433,8 @@ Actor.main(async () => {
             sentimentPlaceholder: analyzeSentiment(comments.join('\n') || title || ''),
           });
 
+          // optional: don’t expand for YouTube; if you want, keep it:
+          // await safeEnqueue(enqueueLinks);
           return;
         }
 
@@ -428,17 +469,12 @@ Actor.main(async () => {
           title: await page.title().catch(() => null),
           text: (await page.content().catch(() => '')).slice(0, 20000),
         });
+
+        await safeEnqueue(enqueueLinks);
       },
 
       failedRequestHandler({ request }, error) {
         L.error('Playwright request failed', { url: request.url, error: error?.message || String(error) });
-
-        Actor.pushData({
-          platform: platformFromUrl(request.url),
-          url: request.url,
-          error: error?.message || String(error),
-          scrapedAt: new Date().toISOString(),
-        }).catch(() => null);
       },
     });
 
